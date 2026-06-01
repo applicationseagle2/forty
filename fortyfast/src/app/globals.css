@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Geist:wght@300;400;500;600&display=swap');
+
+:root {
+  color-scheme: light;
+}
+
+html, body {
+  background: theme('colors.parchment.50');
+  color: theme('colors.ink.900');
+  font-family: theme('fontFamily.sans');
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: theme('colors.sage.200');
+  color: theme('colors.ink.900');
+}
+
+/* Subtle paper texture overlay — gentle, not noisy */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(circle at 20% 10%, rgba(184, 105, 61, 0.04), transparent 40%),
+    radial-gradient(circle at 80% 90%, rgba(107, 127, 79, 0.04), transparent 40%);
+}
+
+main, .relative-content {
+  position: relative;
+  z-index: 1;
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-sage-700 text-parchment-50
+      font-medium rounded-sm hover:bg-sage-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 border border-ink-700 text-ink-900
+      font-medium rounded-sm hover:bg-parchment-100 transition-colors;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 text-ink-700 hover:text-ink-900
+      hover:bg-parchment-100 rounded-sm transition-colors;
+  }
+  .input {
+    @apply w-full px-3 py-2 bg-parchment-50 border border-parchment-300 rounded-sm
+      focus:border-sage-500 focus:outline-none focus:ring-1 focus:ring-sage-500/30
+      placeholder:text-ink-300 text-ink-900;
+  }
+  .label {
+    @apply block text-sm font-medium text-ink-700 mb-1.5;
+  }
+  .card {
+    @apply bg-white border border-parchment-200 rounded-sm;
+  }
+  .display-h1 {
+    @apply font-display font-light text-5xl md:text-6xl lg:text-7xl tracking-tightest leading-[0.95];
+  }
+  .display-h2 {
+    @apply font-display font-light text-3xl md:text-4xl tracking-tightest leading-tight;
+  }
+  .display-eyebrow {
+    @apply text-xs font-medium tracking-[0.2em] uppercase text-ink-500;
+  }
+}

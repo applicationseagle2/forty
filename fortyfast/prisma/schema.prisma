@@ -1,0 +1,322 @@
+// 40-Day Fast — Prisma schema
+// Hierarchy: Stake -> Ward -> Fast -> Signup -> Participant
+// Admins: SUPER_ADMIN > STAKE_ADMIN > WARD_ADMIN
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ====== ORG HIERARCHY ======
+
+model Stake {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  wards  Ward[]
+  admins AdminUser[]
+}
+
+model Ward {
+  id        String   @id @default(cuid())
+  stakeId   String
+  name      String
+  timezone  String   @default("America/Boise") // IANA tz
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Twilio (encrypted) — null until ward configures SMS
+  twilioAccountSid    String?
+  twilioAuthTokenEnc  String? // AES-256-GCM encrypted
+  twilioFromNumber    String?
+
+  stake  Stake       @relation(fields: [stakeId], references: [id], onDelete: Cascade)
+  admins AdminUser[]
+  fasts  Fast[]
+
+  @@index([stakeId])
+}
+
+// ====== AUTH / ADMIN ======
+
+enum AdminRole {
+  SUPER_ADMIN
+  STAKE_ADMIN
+  WARD_ADMIN
+}
+
+model AdminUser {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  emailVerified DateTime?
+  image         String?
+  role          AdminRole
+  stakeId       String?
+  wardId        String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  stake    Stake?    @relation(fields: [stakeId], references: [id], onDelete: SetNull)
+  ward     Ward?     @relation(fields: [wardId], references: [id], onDelete: SetNull)
+  accounts Account[]
+  sessions Session[]
+
+  approvedExperiences Experience[] @relation("ApprovedExperiences")
+
+  @@index([stakeId])
+  @@index([wardId])
+}
+
+// NextAuth tables (PrismaAdapter)
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  @@unique([identifier, token])
+}
+
+model AdminInvite {
+  id        String    @id @default(cuid())
+  email     String
+  role      AdminRole
+  stakeId   String?
+  wardId    String?
+  token     String    @unique
+  invitedBy String
+  expiresAt DateTime
+  acceptedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email])
+}
+
+// ====== FAST ======
+
+enum FastStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+model Fast {
+  id              String     @id @default(cuid())
+  wardId          String
+  name            String
+  purpose         String     @db.Text
+  landingMessage  String?    @db.Text
+  startDate       DateTime   @db.Date // ward-local interpretation
+  status          FastStatus @default(DRAFT)
+  publicSlug      String     @unique // e.g., random + readable
+  accessCode      String     // required in URL; not searchable
+  allowStacking   Boolean    @default(true)
+  cancellationHours Int      @default(72)
+  createdById     String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  ward                Ward                 @relation(fields: [wardId], references: [id], onDelete: Cascade)
+  signups             Signup[]
+  broadcastReminders  BroadcastReminder[]
+  individualReminders IndividualReminder[]
+  experienceFollowUps ExperienceFollowUp[]
+
+  @@index([wardId])
+  @@index([status])
+}
+
+// ====== SIGNUPS / PARTICIPANTS ======
+
+model Signup {
+  id          String   @id @default(cuid())
+  fastId      String
+  dayNumber   Int      // 1..40
+  isPrimary   Boolean  @default(true) // false = stacked on a claimed day
+  magicToken  String   @unique // for /m/:token
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fast         Fast          @relation(fields: [fastId], references: [id], onDelete: Cascade)
+  participants Participant[]
+  experiences  Experience[]
+  messageLogs  MessageLog[]
+
+  @@index([fastId, dayNumber])
+}
+
+model Participant {
+  id          String   @id @default(cuid())
+  signupId    String
+  name        String
+  phone       String?
+  email       String?
+  smsOptIn    Boolean  @default(false)
+  emailOptIn  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  signup Signup @relation(fields: [signupId], references: [id], onDelete: Cascade)
+
+  @@index([signupId])
+}
+
+// ====== COMMUNICATIONS ======
+
+enum Channel {
+  EMAIL
+  SMS
+  BOTH
+}
+
+// Reminders sent to EVERYONE signed up for a fast.
+// daysOffset is relative to fast.startDate (negative = before, 0 = day 1, positive = after start).
+model BroadcastReminder {
+  id          String   @id @default(cuid())
+  fastId      String
+  name        String   // admin-facing label, e.g., "Kickoff", "Day 10 update"
+  daysOffset  Int
+  template    String   @db.Text // contains merge fields like {{firstName}}
+  subject     String?  // for emails
+  channels    Channel  @default(EMAIL)
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fast        Fast         @relation(fields: [fastId], references: [id], onDelete: Cascade)
+  messageLogs MessageLog[]
+
+  @@index([fastId])
+}
+
+// Reminders relative to each participant's individual fast date.
+// daysOffset: -3 = three days before their day; 0 = day-of; +1 = day after.
+model IndividualReminder {
+  id          String   @id @default(cuid())
+  fastId      String
+  name        String
+  daysOffset  Int
+  template    String   @db.Text
+  subject     String?
+  channels    Channel  @default(EMAIL)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fast        Fast         @relation(fields: [fastId], references: [id], onDelete: Cascade)
+  messageLogs MessageLog[]
+
+  @@index([fastId])
+}
+
+// Post-fast experience prompts (e.g., +1, +7, +30, +60).
+model ExperienceFollowUp {
+  id          String   @id @default(cuid())
+  fastId      String
+  name        String
+  daysOffset  Int      // positive number, days after participant's fast date
+  template    String   @db.Text
+  subject     String?
+  channels    Channel  @default(EMAIL)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fast        Fast         @relation(fields: [fastId], references: [id], onDelete: Cascade)
+  messageLogs MessageLog[]
+
+  @@index([fastId])
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  FAILED
+  RETRY
+}
+
+model MessageLog {
+  id                    String   @id @default(cuid())
+  signupId              String?
+  participantEmail      String?
+  participantPhone      String?
+  channel               Channel
+  subject               String?
+  body                  String   @db.Text
+  status                MessageStatus @default(PENDING)
+  error                 String?  @db.Text
+  sentAt                DateTime?
+  createdAt             DateTime @default(now())
+
+  // Which scheduled item produced this (only one is set):
+  broadcastReminderId   String?
+  individualReminderId  String?
+  experienceFollowUpId  String?
+
+  signup              Signup?              @relation(fields: [signupId], references: [id], onDelete: SetNull)
+  broadcastReminder   BroadcastReminder?   @relation(fields: [broadcastReminderId], references: [id], onDelete: SetNull)
+  individualReminder  IndividualReminder?  @relation(fields: [individualReminderId], references: [id], onDelete: SetNull)
+  experienceFollowUp  ExperienceFollowUp?  @relation(fields: [experienceFollowUpId], references: [id], onDelete: SetNull)
+
+  @@index([signupId])
+  @@index([status])
+}
+
+// ====== EXPERIENCES ======
+
+enum ModerationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Experience {
+  id              String           @id @default(cuid())
+  signupId        String
+  participantName String?          // snapshot at submission
+  content         String           @db.Text
+  isAnonymous     Boolean          @default(false)
+  isPublic        Boolean          @default(false) // shown on landing page if approved
+  moderationStatus ModerationStatus @default(PENDING)
+  approvedById    String?
+  approvedAt      DateTime?
+  source          String           @default("MAGIC_LINK") // MAGIC_LINK | EMAIL_REPLY
+  submittedAt     DateTime         @default(now())
+
+  signup     Signup     @relation(fields: [signupId], references: [id], onDelete: Cascade)
+  approvedBy AdminUser? @relation("ApprovedExperiences", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([signupId])
+  @@index([moderationStatus])
+}
