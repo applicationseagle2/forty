@@ -1,15 +1,14 @@
 import type { NextAuthOptions } from 'next-auth';
 import EmailProvider from 'next-auth/providers/email';
-import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from './prisma';
 import { sendMagicLinkEmail } from './email';
+import { CustomPrismaAdapter } from './adapter';
 import type { AdminRole } from '@prisma/client';
 
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma) as any,
+  adapter: CustomPrismaAdapter(prisma),
   providers: [
     EmailProvider({
-      // We use SendGrid directly; this provider only handles token storage.
       server: { host: 'localhost', port: 25, auth: { user: '', pass: '' } },
       from: process.env.SENDGRID_FROM_EMAIL!,
       sendVerificationRequest: async ({ identifier: email, url }) => {
@@ -23,7 +22,6 @@ export const authOptions: NextAuthOptions = {
   },
   callbacks: {
     async signIn({ user }) {
-      // Only allow sign-in for emails that exist as AdminUser
       if (!user.email) return false;
       const admin = await prisma.adminUser.findUnique({ where: { email: user.email } });
       return !!admin;
